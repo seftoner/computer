@@ -101,9 +101,52 @@ void main() {
     await computer.turnOff();
   });
 
+  test("Compute stream without a parameter", () async {
+    final computer = Computer.create();
+    await computer.turnOn();
+
+    final stream = await computer.computeStream<void, String>((_) async* {
+      for (var i = 0; i < 5; i++) {
+        await Future.delayed(Duration(milliseconds: 500));
+        yield 'msg $i';
+      }
+    });
+
+    final results = await stream.toList();
+
+    expect(results, hasLength(5));
+    expect(results, equals(['msg 0', 'msg 1', 'msg 2', 'msg 3', 'msg 4']));
+
+    await computer.turnOff();
+  });
+
+  test("Compute stream with a parameter", () async {
+    final computer = Computer.create();
+    await computer.turnOn();
+
+    // Define a function that takes a parameter and produces a stream
+    Stream<String> streamWithParam(int param) async* {
+      for (var i = 0; i < param; i++) {
+        await Future.delayed(Duration(milliseconds: 100));
+        yield 'msg $i';
+      }
+    }
+
+    final stream =
+        await computer.computeStream<int, String>(streamWithParam, param: 3);
+
+    final results = await stream.toList();
+
+    expect(results, hasLength(3));
+    expect(results, equals(['msg 0', 'msg 1', 'msg 2']));
+
+    await computer.turnOff();
+  });
+
   test('Add computes before workers have been created', () async {
     final computer = Computer.create();
-    expect(Future.value(computer.compute<int, int>(fib, param: 20)), completion(equals(fib20())));
+    expect(Future.value(computer.compute<int, int>(fib, param: 20)),
+        completion(equals(fib20())));
     unawaited(computer.turnOn());
 
     addTearDown(() async => await computer.turnOff());

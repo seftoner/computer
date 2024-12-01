@@ -72,20 +72,57 @@ class ComputeAPI {
 
     final freeWorker = _findFreeWorker();
 
-    if (freeWorker == null) {
-      _logger?.log('No free workers, add task to the queue');
+    if (freeWorker != null) {
+      _logger?.log('Found free worker, executing on it');
+      freeWorker.execute(task);
+    } else {
+      _logger?.log('No free workers, adding task to the queue');
       if (_workers.length == 1) {
         _workers.single.execute(task);
       } else {
         _taskQueue.add(task);
       }
-    } else {
-      _logger?.log('Found free worker, executing on it');
-      freeWorker.execute(task);
     }
 
-    final result = await taskCompleter.future;
-    return result;
+    return await taskCompleter.future;
+  }
+
+  Future<Stream<T>> computeStream<P, T>(
+    Stream<T> Function(P param) fn, {
+    P? param,
+  }) async {
+    _logger?.log('Started stream computation');
+
+    final streamController = StreamController<T>();
+    final taskCapability = Capability();
+
+    final task = Task(
+      task: fn,
+      param: param,
+      capability: taskCapability,
+    );
+
+    final freeWorker = _findFreeWorker();
+
+    void onStreamResult(dynamic message) {
+      if (message is T) {
+        streamController.add(message);
+      } else if (message == null) {
+        streamController.close();
+      } else if (message is RemoteExecutionError) {
+        streamController.addError(message);
+      }
+    }
+
+    if (freeWorker != null) {
+      _logger?.log('Found free worker, executing on it');
+      freeWorker.executeStream(task, onStreamResult);
+    } else {
+      _logger?.log('No free workers, adding stream task to the queue');
+      _taskQueue.add(task);
+    }
+
+    return streamController.stream;
   }
 
   Future<void> turnOff() async {

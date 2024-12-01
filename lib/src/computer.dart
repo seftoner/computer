@@ -31,6 +31,15 @@ class Computer {
 
   /// Executes function `fn` with passed `param`. Takes only top-level functions and static methods.
   /// `P` is `param` type, `R` is function return type
+  Future<Stream<R>> computeStream<P, R>(
+    Stream<R> Function(P param) fn, {
+    P? param,
+  }) async {
+    return _computeDelegate.computeStream<P, R>(fn, param: param);
+  }
+
+  /// Executes function `fn` with passed `param`. Takes only top-level functions and static methods.
+  /// `P` is `param` type, `R` is function return type
   Future<R> compute<P, R>(
     Function fn, {
     P? param,
