@@ -143,6 +143,53 @@ void main() {
     await computer.turnOff();
   });
 
+  test('computeStream handles errors in stream task gracefully', () async {
+    final computer = Computer.create();
+    await computer.turnOn();
+
+    final stream = await computer.computeStream<int, int>(errorStream);
+
+    expect(
+      () async {
+        await for (final i in stream) {
+          print(i);
+        }
+      },
+      throwsA(isA<RemoteExecutionError>()),
+    );
+  });
+
+  test('computeStream throws CancelExecutionError on turnOff during processing',
+      () async {
+    final computer = Computer.create();
+    await computer.turnOn();
+
+    try {
+      await computer.computeStream<int, int>(errorStream, param: 3);
+    } catch (e) {
+      expect(e, isA<CancelExecutionError>());
+      expect(e, isA<ComputerError>());
+    }
+
+    await computer.turnOff();
+  });
+
+  test('computeStream handles an empty stream task gracefully', () async {
+    Stream<String> emptyStream(void _) async* {}
+
+    final computer = Computer.create();
+    await computer.turnOn();
+
+    final stream = await computer.computeStream<void, String>(emptyStream);
+
+    final results = <String>[];
+    await for (final value in stream) {
+      results.add(value);
+    }
+
+    expect(results, isEmpty);
+  });
+
   test('Add computes before workers have been created', () async {
     final computer = Computer.create();
     expect(Future.value(computer.compute<int, int>(fib, param: 20)),
@@ -205,6 +252,10 @@ int fib(int n) {
 }
 
 int errorFib(int n) {
+  throw Exception('Something went wrong');
+}
+
+Stream<int> errorStream(void _) async* {
   throw Exception('Something went wrong');
 }
 
