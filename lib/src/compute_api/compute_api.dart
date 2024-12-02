@@ -10,143 +10,178 @@ import 'worker.dart';
 
 class ComputeAPI {
   final _workers = <Worker>[];
-
   final _taskQueue = Queue<Task>();
-
   final _activeTaskCompleters = <Capability, Completer>{};
-
   Logger? _logger;
 
   bool isRunning = false;
-  bool _allowCreating = false;
+  bool _allowCreatingWorkers = false;
 
   Future<void> turnOn({
     int workersCount = 2,
     bool verbose = false,
   }) async {
-    _logger ??= Logger(enabled: verbose);
+    _logger = Logger(enabled: verbose);
+    _logger?.log('Turning on ComputeAPI');
 
-    _logger?.log('Turning on');
-    _allowCreating = true;
-
+    _allowCreatingWorkers = true;
     for (var i = 0; i < workersCount; i++) {
-      if (!_allowCreating) {
-        return;
-      }
-      _logger?.log('Starting worker $i...');
-      final worker = Worker('worker$i');
-      await worker.init(onResult: _onTaskFinished, onError: _onTaskFailed);
-      if (!_allowCreating) {
-        await worker.dispose();
-        return;
-      }
-      _workers.add(worker);
-      _logger?.log('Worker $i has started');
-      if (_taskQueue.isNotEmpty) {
-        _logger?.log("Queue isn't empty, new worker picking task");
-        final task = _taskQueue.removeFirst();
-        isRunning = true;
-        worker.execute(task);
-      }
+      if (!_allowCreatingWorkers) return;
+      await _startWorker(i);
     }
 
     isRunning = true;
   }
 
-  Future<R> compute<P, R>(
-    Function fn, {
-    P? param,
-  }) async {
-    _logger?.log('Started computation');
+  Future<void> _startWorker(int index) async {
+    _logger?.log('Starting worker $index...');
+    final worker = Worker('worker #$index');
+    await worker.init(onResult: _onTaskFinished, onError: _onTaskFailed);
 
+    if (!_allowCreatingWorkers) {
+      await worker.dispose();
+      return;
+    }
+
+    _workers.add(worker);
+    _logger?.log('Worker $index has started');
+    _assignTaskToWorker(worker);
+  }
+
+  Future<R> compute<P, R>(Function fn, {P? param}) async {
+    _logger?.log('Started computation');
+    return _enqueueFutureTask<P, R>(fn, param: param);
+  }
+
+  Future<Stream<R>> computeStream<P, R>(Stream<R> Function(P param) fn,
+      {P? param}) async {
+    _logger?.log('Started stream computation');
+    final streamController = StreamController<R>();
+    _enqueueStreamTask<P, R>(fn,
+        param: param, streamController: streamController);
+    return streamController.stream;
+  }
+
+  Future<R> _enqueueFutureTask<P, R>(
+    Function task, {
+    P? param,
+  }) {
     final taskCapability = Capability();
     final taskCompleter = Completer<R>();
 
-    final task = Task(
-      task: fn,
+    final newTask = _createTask(
+      task: task,
       param: param,
       capability: taskCapability,
     );
 
     _activeTaskCompleters[taskCapability] = taskCompleter;
 
-    final freeWorker = _findFreeWorker();
-
-    if (freeWorker != null) {
-      _logger?.log('Found free worker, executing on it');
-      freeWorker.execute(task);
-    } else {
-      _logger?.log('No free workers, adding task to the queue');
-      if (_workers.length == 1) {
-        _workers.single.execute(task);
-      } else {
-        _taskQueue.add(task);
-      }
-    }
-
-    return await taskCompleter.future;
+    _processTask(newTask);
+    return taskCompleter.future;
   }
 
-  Future<Stream<T>> computeStream<P, T>(
-    Stream<T> Function(P param) fn, {
+  _enqueueStreamTask<P, R>(
+    Stream<R> Function(P param) task, {
     P? param,
-  }) async {
-    _logger?.log('Started stream computation');
-
-    final streamController = StreamController<T>();
+    required StreamController<R> streamController,
+  }) {
     final taskCapability = Capability();
 
-    final task = Task(
-      task: fn,
+    final newTask = _createTask(
+      task: task,
       param: param,
       capability: taskCapability,
+      streamController: streamController,
     );
 
-    final freeWorker = _findFreeWorker();
-
-    void onStreamResult(dynamic message) {
-      if (message is T) {
-        streamController.add(message);
-      } else if (message == null) {
-        streamController.close();
-      } else if (message is RemoteExecutionError) {
-        streamController.addError(message);
-      }
-    }
-
-    if (freeWorker != null) {
-      _logger?.log('Found free worker, executing on it');
-      freeWorker.executeStream(task, onStreamResult);
-    } else {
-      _logger?.log('No free workers, adding stream task to the queue');
-      _taskQueue.add(task);
-    }
-
-    return streamController.stream;
+    _processTask(newTask);
   }
 
+  Task _createTask<P, T>({
+    required Function task,
+    P? param,
+    required Capability capability,
+    StreamController<T>? streamController,
+  }) {
+    return Task(
+      task: task,
+      param: param,
+      capability: capability,
+      streamController: streamController,
+    );
+  }
+
+  void _processTask(Task task) {
+    final freeWorker = _findFreeWorker();
+
+    if (freeWorker != null) {
+      _logger?.log('Found free worker, executing task');
+      _assignTask(freeWorker, task);
+    } else {
+      _logger?.log('No free workers, adding task to the queue');
+      _taskQueue.add(task);
+    }
+  }
+
+/*   Future<T> _enqueueTask<P, T>(
+    Function task, {
+    P? param,
+    StreamController? streamController,
+  }) async {
+    final taskCapability = Capability();
+    final taskCompleter = streamController == null
+        ? Completer<T>()
+        : null; // Stream tasks don't need a Future Completer
+
+    final newTask = Task(
+      task: task,
+      param: param,
+      capability: taskCapability,
+      streamController: streamController,
+    );
+
+    if (taskCompleter != null) {
+      _activeTaskCompleters[taskCapability] = taskCompleter;
+    }
+
+    final freeWorker = _findFreeWorker();
+    if (freeWorker != null) {
+      _logger?.log('Found free worker, executing task');
+      _assignTask(freeWorker, newTask);
+    } else {
+      _logger?.log('No free workers, adding task to the queue');
+      _taskQueue.add(newTask);
+    }
+
+    return taskCompleter!.future;
+  }
+ */
   Future<void> turnOff() async {
-    _logger?.log('Turning off computer...');
-    _allowCreating = false;
+    _logger?.log('Turning off ComputeAPI');
+    _allowCreatingWorkers = false;
+
     for (final worker in _workers) {
       await worker.dispose();
     }
-    _activeTaskCompleters.forEach((taskCapability, completer) {
+
+    _cancelAllPendingTasks();
+    _workers.clear();
+    _taskQueue.clear();
+    isRunning = false;
+    _logger?.log('ComputeAPI turned off');
+  }
+
+  void _cancelAllPendingTasks() {
+    _activeTaskCompleters.forEach((capability, completer) {
       if (!completer.isCompleted) {
         completer.completeError(CancelExecutionError(
-          'Canceled because of computer turn off',
-          taskCapability,
+          'Canceled due to ComputeAPI turn off',
+          capability,
         ));
       }
     });
     _activeTaskCompleters.clear();
-
-    _workers.clear();
-    _taskQueue.clear();
-
-    isRunning = false;
-
-    _logger?.log('Turned off computer');
   }
 
   Worker? _findFreeWorker() {
@@ -156,30 +191,54 @@ class ComputeAPI {
     return null;
   }
 
-  void _onTaskFinished(TaskResult result, Worker worker) {
-    final taskCompleter = _activeTaskCompleters.remove(result.capability)!;
-    taskCompleter.complete(result.result);
-
-    _logger?.log("Worker #${worker.name} successfully completed the task");
-
+  void _assignTaskToWorker(Worker worker) {
     if (_taskQueue.isNotEmpty) {
-      _logger?.log("Finished task on worker, queue isn't empty, pick task");
+      _logger?.log('Assigning task from queue to worker ${worker.name}');
       final task = _taskQueue.removeFirst();
+      _assignTask(worker, task);
+    }
+  }
+
+  void _assignTask(Worker worker, Task task) {
+    if (task.streamController != null) {
+      worker.executeStream(
+          task, (message) => _handleStreamMessage(worker, task, message));
+    } else {
       worker.execute(task);
     }
   }
 
+  void _handleStreamMessage(Worker worker, Task task, dynamic message) {
+    //BUG: insteadof TaskResult recieve null
+    if (message is TaskResult) {
+      task.streamController!.close();
+      _onTaskFinished(message, worker);
+    } else if (message is RemoteExecutionError) {
+      task.streamController!.addError(message);
+      worker.status = WorkerStatus.idle;
+    } else {
+      task.streamController!.add(message);
+    }
+
+    _assignTaskToWorker(worker);
+  }
+
+  void _onTaskFinished(TaskResult result, Worker worker) {
+    final taskCompleter = _activeTaskCompleters.remove(result.capability);
+    taskCompleter?.complete(result.result);
+
+    _logger?.log("Worker #${worker.name} successfully completed the task");
+    worker.status = WorkerStatus.idle;
+    _assignTaskToWorker(worker);
+  }
+
   void _onTaskFailed(RemoteExecutionError error, Worker worker) {
-    final taskCompleter = _activeTaskCompleters.remove(error.taskCapability)!;
-    taskCompleter.completeError(error);
+    final taskCompleter = _activeTaskCompleters.remove(error.taskCapability);
+    taskCompleter?.completeError(error);
 
     _logger?.log(
-        "Worker #${worker.name} failed to complete the task with error: ${error.message}");
-
-    if (_taskQueue.isNotEmpty) {
-      _logger?.log("Finished task on worker, queue isn't empty, pick task");
-      final task = _taskQueue.removeFirst();
-      worker.execute(task);
-    }
+        "Worker #${worker.name} failed to complete the task: ${error.message}");
+    worker.status = WorkerStatus.idle;
+    _assignTaskToWorker(worker);
   }
 }

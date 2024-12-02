@@ -1,16 +1,18 @@
+import 'dart:async';
 import 'dart:isolate';
 
 class Task {
   final Function task;
   final dynamic param;
+  StreamController? streamController;
 
   final Capability capability;
 
-  Task({
-    required this.task,
-    required this.capability,
-    this.param,
-  });
+  Task(
+      {required this.task,
+      required this.capability,
+      this.param,
+      this.streamController});
 }
 
 class TaskResult {
