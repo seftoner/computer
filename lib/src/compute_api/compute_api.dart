@@ -160,6 +160,8 @@ class ComputeAPI {
     final taskCompleter = _activeTaskCompleters.remove(result.capability)!;
     taskCompleter.complete(result.result);
 
+    _logger?.log("Worker #${worker.name} successfully completed the task");
+
     if (_taskQueue.isNotEmpty) {
       _logger?.log("Finished task on worker, queue isn't empty, pick task");
       final task = _taskQueue.removeFirst();
@@ -170,6 +172,9 @@ class ComputeAPI {
   void _onTaskFailed(RemoteExecutionError error, Worker worker) {
     final taskCompleter = _activeTaskCompleters.remove(error.taskCapability)!;
     taskCompleter.completeError(error);
+
+    _logger?.log(
+        "Worker #${worker.name} failed to complete the task with error: ${error.message}");
 
     if (_taskQueue.isNotEmpty) {
       _logger?.log("Finished task on worker, queue isn't empty, pick task");
