@@ -124,39 +124,6 @@ class ComputeAPI {
     }
   }
 
-/*   Future<T> _enqueueTask<P, T>(
-    Function task, {
-    P? param,
-    StreamController? streamController,
-  }) async {
-    final taskCapability = Capability();
-    final taskCompleter = streamController == null
-        ? Completer<T>()
-        : null; // Stream tasks don't need a Future Completer
-
-    final newTask = Task(
-      task: task,
-      param: param,
-      capability: taskCapability,
-      streamController: streamController,
-    );
-
-    if (taskCompleter != null) {
-      _activeTaskCompleters[taskCapability] = taskCompleter;
-    }
-
-    final freeWorker = _findFreeWorker();
-    if (freeWorker != null) {
-      _logger?.log('Found free worker, executing task');
-      _assignTask(freeWorker, newTask);
-    } else {
-      _logger?.log('No free workers, adding task to the queue');
-      _taskQueue.add(newTask);
-    }
-
-    return taskCompleter!.future;
-  }
- */
   Future<void> turnOff() async {
     _logger?.log('Turning off ComputeAPI');
     _allowCreatingWorkers = false;
